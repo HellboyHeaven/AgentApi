@@ -1,0 +1,200 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>AgentApi</title>
+<script src="https://cdn.jsdelivr.net/npm/marked@12.0.2/marked.min.js"></script>
+<script src="https://cdn.jsdelivr.net/npm/dompurify@3.1.6/dist/purify.min.js"></script>
+<style>
+  :root { --bg:#fff; --fg:#1a1a1a; --muted:#6b6b6b; --card:#f4f4f5; --line:#ddd; --ok:#1a7f37; --bad:#c62828; --accent:#2457d6; }
+  @media (prefers-color-scheme: dark) {
+    :root { --bg:#16181d; --fg:#e8e8e8; --muted:#9a9a9a; --card:#22252c; --line:#33363e; --ok:#4cc16b; --bad:#ff6b6b; --accent:#7aa2ff; }
+  }
+  * { box-sizing: border-box; }
+  body { margin:0; background:var(--bg); color:var(--fg); font:16px/1.5 system-ui, sans-serif; }
+  main { max-width:760px; margin:0 auto; padding:24px 16px 64px; }
+  h1 { font-size:20px; margin:0 0 16px; }
+  form { display:flex; gap:8px; }
+  input { flex:1; padding:10px 12px; font:inherit; color:inherit; background:var(--card); border:1px solid var(--line); border-radius:8px; }
+  button { padding:10px 16px; font:inherit; color:#fff; background:var(--accent); border:0; border-radius:8px; cursor:pointer; }
+  button:disabled { opacity:.5; cursor:default; }
+  #meta { font-size:13px; color:var(--muted); }
+
+  /* Answer (markdown) */
+  #answer { margin:24px 0 8px; overflow-wrap:anywhere; }
+  #answer.truncated::after { content:"Forced answer: the step limit was reached."; display:block; margin-top:8px; font-size:13px; color:var(--bad); }
+  #answer > :first-child { margin-top:0; }
+  #answer > :last-child { margin-bottom:0; }
+  #answer h1, #answer h2, #answer h3 { margin:1.2em 0 .4em; line-height:1.25; }
+  #answer h1 { font-size:1.4em; } #answer h2 { font-size:1.2em; } #answer h3 { font-size:1.05em; }
+  #answer p, #answer ul, #answer ol { margin:.6em 0; }
+  #answer ul, #answer ol { padding-left:1.5em; }
+  #answer a { color:var(--accent); }
+  #answer blockquote { margin:.8em 0; padding:.2em 1em; border-left:3px solid var(--line); color:var(--muted); }
+  #answer hr { border:0; border-top:1px solid var(--line); margin:1.2em 0; }
+  #answer code { padding:.1em .35em; font-size:.9em; background:var(--card); border-radius:4px; }
+  #answer pre { margin:.8em 0; padding:12px; overflow-x:auto; border:1px solid var(--line); border-radius:8px; background:var(--card); }
+  #answer pre code { padding:0; background:none; font-size:13px; }
+  #answer .table-wrap { overflow-x:auto; margin:.8em 0; }
+  #answer table { border-collapse:collapse; }
+  #answer th, #answer td { padding:6px 10px; border:1px solid var(--line); text-align:left; }
+  #answer th { background:var(--card); }
+
+  /* Steps feed */
+  #steps { margin-top:16px; display:flex; flex-direction:column; gap:8px; }
+  details { background:var(--card); border:1px solid var(--line); border-radius:8px; padding:8px 12px; }
+  summary { cursor:pointer; display:flex; gap:8px; align-items:baseline; }
+  .name { font-weight:600; }
+  .status { margin-left:auto; font-size:13px; color:var(--muted); }
+  .status.ok { color:var(--ok); } .status.bad { color:var(--bad); }
+  details pre { margin:8px 0 0; padding:8px; overflow-x:auto; white-space:pre-wrap; word-break:break-word; font-size:13px; border-top:1px solid var(--line); }
+  .label { margin-top:8px; font-size:12px; color:var(--muted); text-transform:uppercase; }
+</style>
+</head>
+<body>
+<main>
+  <h1>Agent with tools</h1>
+  <form id="form">
+    <input id="q" maxlength="2000" placeholder="Ask a question" autofocus required>
+    <button id="send">Ask</button>
+  </form>
+  <div id="answer"></div>
+  <div id="meta"></div>
+  <div id="steps"></div>
+</main>
+
+<script>
+const $ = (id) => document.getElementById(id);
+const stepEls = new Map();  // tool call id -> {status, out, label}
+
+// Everything except the answer uses textContent: tool results are untrusted
+function el(tag, className, text) {
+  const e = document.createElement(tag);
+  if (className) e.className = className;
+  if (text !== undefined) e.textContent = text;
+  return e;
+}
+
+function prettyArgs(raw) {
+  try { return JSON.stringify(JSON.parse(raw || "{}"), null, 2); } catch { return raw || ""; }
+}
+
+/* ---------- Markdown ---------- */
+
+marked.setOptions({ gfm: true, breaks: true });
+
+// Open links in a new tab, without access to window.opener
+DOMPurify.addHook("afterSanitizeAttributes", (node) => {
+  if (node.tagName === "A") {
+    node.setAttribute("target", "_blank");
+    node.setAttribute("rel", "noopener noreferrer nofollow");
+  }
+});
+
+function renderMarkdown(text) {
+  const html = marked.parse(text);
+  const clean = DOMPurify.sanitize(html, {
+    // img is forbidden: via prompt injection an image could leak data to a foreign server
+    FORBID_TAGS: ["img", "style", "form", "input", "iframe"],
+  });
+  const box = $("answer");
+  box.innerHTML = clean;  // safe only because it went through DOMPurify
+  // Wide tables get their own horizontal scroll
+  box.querySelectorAll("table").forEach((t) => {
+    const wrap = el("div", "table-wrap");
+    t.replaceWith(wrap);
+    wrap.append(t);
+  });
+}
+
+/* ---------- Steps feed ---------- */
+
+function addStep(ev) {
+  const details = el("details");
+  const summary = el("summary");
+  const status = el("span", "status", "running…");
+  summary.append(el("span", "name", ev.name), status);
+  details.append(summary, el("div", "label", "Arguments"), el("pre", "", prettyArgs(ev.arguments)));
+
+  const label = el("div", "label", "Result");
+  const out = el("pre", "", "");
+  label.hidden = out.hidden = true;
+  details.append(label, out);
+
+  $("steps").append(details);
+  stepEls.set(ev.id, { status, out, label });
+}
+
+function finishStep(ev) {
+  const s = stepEls.get(ev.id);
+  if (!s) return;
+  s.status.textContent = `${ev.ok ? "ok" : "error"} · ${ev.ms ?? "?"} ms`;
+  s.status.className = "status " + (ev.ok ? "ok" : "bad");
+  s.out.textContent = ev.content;
+  s.out.hidden = s.label.hidden = false;
+}
+
+/* ---------- Events and stream ---------- */
+
+function handle(ev) {
+  switch (ev.type) {
+    case "tool_call": addStep(ev); break;
+    case "tool_result": finishStep(ev); break;
+    case "answer":
+      renderMarkdown(ev.text);
+      $("answer").classList.toggle("truncated", !!ev.truncated);
+      break;
+    case "usage": $("meta").textContent = `Tokens: ${ev.in} in / ${ev.out} out`; break;
+    case "done": $("meta").textContent += ` · model steps: ${ev.steps}`; break;
+    case "error": $("answer").textContent = "Error: " + ev.message; break;
+  }
+}
+
+// EventSource only supports GET, but we use POST: read the stream via fetch and parse SSE by hand
+async function ask(question) {
+  const resp = await fetch("/agent", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ question }),
+  });
+  if (!resp.ok) throw new Error("HTTP " + resp.status);
+
+  const reader = resp.body.getReader();
+  const decoder = new TextDecoder();
+  let buffer = "";
+  while (true) {
+    const { value, done } = await reader.read();
+    if (done) break;
+    buffer += decoder.decode(value, { stream: true });
+    // An SSE event ends with a blank line; the last chunk may be incomplete
+    const parts = buffer.split("\n\n");
+    buffer = parts.pop();
+    for (const part of parts) {
+      const line = part.split("\n").find((l) => l.startsWith("data: "));
+      if (line) handle(JSON.parse(line.slice(6)));
+    }
+  }
+}
+
+$("form").addEventListener("submit", async (e) => {
+  e.preventDefault();
+  const question = $("q").value.trim();
+  if (!question) return;
+  $("send").disabled = true;
+  $("answer").textContent = "Thinking…";
+  $("answer").classList.remove("truncated");
+  $("meta").textContent = "";
+  $("steps").replaceChildren();
+  stepEls.clear();
+  try {
+    await ask(question);
+  } catch (err) {
+    $("answer").textContent = "Error: " + err.message;
+  } finally {
+    $("send").disabled = false;
+  }
+});
+</script>
+</body>
+</html>

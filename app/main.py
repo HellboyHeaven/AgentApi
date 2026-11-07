@@ -1,8 +1,10 @@
 import json
 import logging
+from pathlib import Path
 
 from fastapi import FastAPI
 from fastapi.responses import StreamingResponse
+from fastapi.staticfiles import StaticFiles
 from openai import AsyncOpenAI
 from pydantic import BaseModel, Field
 
@@ -52,3 +54,5 @@ async def agent(req: AgentRequest):
 @app.get("/health")
 async def health():
     return {"status": "ok"}
+
+app.mount("/", StaticFiles(directory=Path(__file__).parent / "static", html=True), name="static")
