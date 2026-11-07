@@ -8,6 +8,7 @@ class Settings(BaseSettings):
 
     # Base URL of the RagDocsApi service, used by the document search tool
     rag_api_url: str = "http://localhost:8000"
+    rag_timeout_s: float = 8.0
 
     # Hard limit on model/tool round trips, protects against infinite loops
     max_agent_steps: int = 6
@@ -17,5 +18,6 @@ class Settings(BaseSettings):
     model_config = SettingsConfigDict(env_file=".env", extra="ignore")
     tool_timeout_s: float = 10.0
     max_tool_output_chars: int = 4000
+    
 
 settings = Settings()
