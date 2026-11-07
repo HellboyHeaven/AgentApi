@@ -1,1 +1,8 @@
 tzdata
+fastapi
+uvicorn
+openai
+httpx
+jsonschema
+pydantic-settings
+tenacity

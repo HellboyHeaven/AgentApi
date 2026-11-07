@@ -1,0 +1,11 @@
+services:
+  agent:
+    build: .
+    ports:
+      - "8001:8001"
+    env_file: .env
+    environment:
+      # RagDocsApi runs on the host, not inside this container
+      RAG_API_URL: http://host.docker.internal:8000
+    extra_hosts:
+      - "host.docker.internal:host-gateway"   # needed on Linux

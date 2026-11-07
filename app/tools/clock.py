@@ -31,10 +31,13 @@ def current_time(timezone: str = "UTC", now: datetime | None = None) -> dict:
 CURRENT_TIME = Tool(
     name="current_time",
     description=(
-        "Get the current date, time and weekday. You do not know the current time, so use "
-        "this tool for anything about today, now, tomorrow, or how long until or since a "
-        "date. Defaults to UTC; pass an IANA timezone name such as 'Europe/Warsaw' for "
-        "local time."
+        "Get the real current date, time and weekday. You do NOT know today's date: "
+        "your training data is outdated, so any year you assume is probably wrong. "
+        "REQUIRED whenever the answer compares something with the present: "
+        "'how many years/days since', 'how long ago', 'until', someone's age, "
+        "'this year', 'today', 'now'. Call it in the same step as any lookup tool "
+        "(e.g. wikipedia_search), do not wait. "
+        "Defaults to UTC; pass an IANA timezone name such as 'Europe/Warsaw' for local time."
     ),
     parameters={
         "type": "object",

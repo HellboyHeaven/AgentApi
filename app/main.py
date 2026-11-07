@@ -10,6 +10,7 @@ from pydantic import BaseModel, Field
 
 from app.agent import run_agent  # поправьте путь к вашему модулю
 from app.config import settings
+from app.llm import complete
 from app.tools.builtin import build_registry
 
 logger = logging.getLogger(__name__)
@@ -17,13 +18,6 @@ logger = logging.getLogger(__name__)
 app = FastAPI(title="AgentApi")
 registry = build_registry()
 llm = AsyncOpenAI(base_url=settings.llm_base_url, api_key=settings.llm_api_key)
-
-
-async def complete(messages: list[dict], tools: list[dict] | None):
-    kwargs = {"model": settings.llm_model, "messages": messages}
-    if tools:  # tools=None отправился бы как null, поэтому передаём только когда есть
-        kwargs["tools"] = tools
-    return await llm.chat.completions.create(**kwargs)
 
 
 class AgentRequest(BaseModel):
